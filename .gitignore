@@ -1,0 +1,29 @@
+# ========== Unity generated files ==========
+
+Library/
+Temp/
+Obj/
+Logs/
+UserSettings/
+Packages/com.unity.package-manager-ui/
+.vs/
+.idea/
+.vscode/
+Thumbs.db
+.DS_Store
+
+# ========== Unity build files ==========
+Build/
+Builds/
+ExportedProject/
+*.apk
+*.aab
+
+# ========== OS generated files ==========
+
+.DS_Store
+*.swp
+*.lock
+*.tmp
+*.bak
+*.old
