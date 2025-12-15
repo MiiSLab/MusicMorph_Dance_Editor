@@ -21,10 +21,10 @@ public class ManualBaseMotionEditor : MonoBehaviour
     private List<GameObject> rmsMarkers = new List<GameObject>();
 
 
-    private Button play_button, pause_button, stop_button, save_button, reset_button;
+    private Button play_button, pause_button, stop_button, save_button, reset_button, close_button;
     //public string danceId = "demo";
     public Image keyFrames;
-    public string baseUrl = "miislab.pagekite.me"; //"http://140.118.162.43:8443"
+    public string baseUrl = "http://140.118.162.43:8443"; //"http://140.118.162.43:8443" "miislab.pagekite.me"
     private DanceDataManager dataManager;
     private DoubleSlider doubleSlider;
     private Slider timeSlider;
@@ -42,7 +42,8 @@ public class ManualBaseMotionEditor : MonoBehaviour
     private int selectedJointIndex = -1;
     private Button selectedJointButton = null;
     private string selectedJointName = "";
-
+    public CharacterSelectionManager characterSelectionManager;
+    private List<string> characterParents = new List<string>();
     private string msg;
 
     // 關節按鈕列表
@@ -53,6 +54,8 @@ public class ManualBaseMotionEditor : MonoBehaviour
     private Color selectedButtonColor = new Color(1f, 0f, 0f, 1f); // 紅色背景
     private Color buttonBorderColor = new Color(1f, 1f, 0f, 1f); // 黃色邊框
 
+    // 球體相關
+    private Dictionary<string, GameObject> characterJointSpheres = new Dictionary<string, GameObject>();
     private GameObject currentSphere; // 當前 Joint 上的 Sphere
     public GameObject spherePrefab; // 用於拖動 Joint 的 Sphere 預製體
     private Renderer currentSphereRenderer; // Sphere 的 Renderer
@@ -345,7 +348,7 @@ public class ManualBaseMotionEditor : MonoBehaviour
     {
         UpdateDebug($"current frame: {dataManager.CurrentFrameIndex}\n"
         + $"range from {selectedMinFrame} to {selectedMaxFrame}\n"
-        + $"status: {selectedJointIndex}\n"
+        // + $"status: {selectedJointIndex}\n"
         + $"selected joint: {(selectedJointIndex >= 0 ? GetJointNameByIndex(selectedJointIndex) : "none")}\n"
         + $"selectedJointIndex: {(dataManager.IsPlaying ? "playing" : "pause")}\n"
         + $"isEditingStartFrame: {isEditingStartFrame}\n"
@@ -381,6 +384,7 @@ public class ManualBaseMotionEditor : MonoBehaviour
         timeSlider = GameObject.Find("TimeSlider").GetComponent<Slider>();
         reset_button = GameObject.Find("ResetButton").GetComponent<Button>();
         save_button = GameObject.Find("SaveButton").GetComponent<Button>();
+        close_button = GameObject.Find("Close").GetComponent<Button>();
     }
 
     private void GetComponents()
@@ -391,6 +395,14 @@ public class ManualBaseMotionEditor : MonoBehaviour
             if (dataManager == null)
             {
                 dataManager = gameObject.AddComponent<DanceDataManager>();
+            }
+        }
+        if (characterSelectionManager == null)
+        {
+            characterSelectionManager = FindObjectOfType<CharacterSelectionManager>();
+            if (characterSelectionManager == null)
+            {
+                Debug.LogWarning("找不到 CharacterSelectionManager 實例");
             }
         }
     }
@@ -405,15 +417,24 @@ public class ManualBaseMotionEditor : MonoBehaviour
         pause_button.onClick.AddListener(() => { dataManager.PauseWithAudio(); });
         stop_button.onClick.AddListener(() => { dataManager.Test(); });
 
-        // 添加 Reset 按鈕事件
-        reset_button.onClick.AddListener(ResetEditingState);
+        reset_button.onClick.AddListener(() =>
+        {
+            ResetEditingState();
+        });
 
-        // 添加 Save 按鈕事件
-        save_button.onClick.AddListener(SaveEditedPose);
+        save_button.onClick.AddListener(() =>
+        {
+            SaveEditedPose();
+            dataManager.SaveCSVData();
+        });
 
-        // 訂閱 DanceDataManager 事件
         dataManager.OnFrameChanged += OnFrameChanged;
         dataManager.OnPlayStateChanged += OnPlayStateChanged;
+
+        close_button.onClick.AddListener(() =>
+        {
+            UnselectCurrentJoint();
+        });
     }
     private void ResetEditingState()
     {
@@ -426,21 +447,19 @@ public class ManualBaseMotionEditor : MonoBehaviour
         isEditingStartFrame = true;
         hasEditedStartFrame = false;
 
-        // 重置當前幀的所有關節位置
-        int currentFrame = dataManager.CurrentFrameIndex;
+        dataManager.CopyFrameData2TempFrameData();
+        dataManager.SaveCSVData();
 
-        // 使用 DanceDataManager 中的方法重置當前幀
-        dataManager.ResetTempFrameData(currentFrame);
+        // // 重置當前幀的所有關節位置
+        // int currentFrame = dataManager.CurrentFrameIndex;
 
-        // 更新顯示
-        dataManager.UpdateCubeParentJointPositions(currentFrame);
+        // // 使用 DanceDataManager 中的方法重置當前幀
+        // dataManager.ResetTempFrameData(currentFrame);
 
         // 取消關節選擇
         UnselectCurrentJoint();
-
     }
 
-    // 保存編輯的姿勢
     // 保存編輯的姿勢
     private void SaveEditedPose()
     {
@@ -452,6 +471,7 @@ public class ManualBaseMotionEditor : MonoBehaviour
         if (startFrame == endFrame)
         {
             msg = "start and end frame are the same, no need to interpolate";
+            Debug.Log(msg);
             return;
         }
 
@@ -485,9 +505,14 @@ public class ManualBaseMotionEditor : MonoBehaviour
         if (hasEdits)
         {
             msg = "save edited pose";
+            Debug.Log(msg);
             UnselectCurrentJoint();
         }
-        else { msg = "no edits to save"; }
+        else
+        {
+            msg = "no edits to save";
+            Debug.Log(msg);
+        }
     }
     private void UnselectCurrentJoint()
     {
@@ -503,13 +528,8 @@ public class ManualBaseMotionEditor : MonoBehaviour
             selectedJointButton = null;
         }
 
-        // 移除球體
-        if (currentSphere != null)
-        {
-            Destroy(currentSphere);
-            currentSphere = null;
-            currentSphereRenderer = null;
-        }
+        // 清除所有球體
+        ClearAllJointSpheres();
 
         // 重置控制狀態
         isControllingJoint = false;
@@ -746,32 +766,100 @@ public class ManualBaseMotionEditor : MonoBehaviour
             originalJointPosition = framePositions[selectedJointIndex];
         }
 
-        // 添加球體顯示 - 先移除舊的球體
-        if (currentSphere != null)
+        // 清除所有現有的球體
+        ClearAllJointSpheres();
+
+        // 獲取選中的角色列表
+        HashSet<string> selectedCharacters = characterSelectionManager.selectedIDs;
+
+        // 如果沒有選中的角色，至少為默認骨架創建球體
+        if (selectedCharacters == null || selectedCharacters.Count == 0)
         {
-            Destroy(currentSphere);
+            CreateSphereForJoint("SkeletonCubeParent", selectedJointName);
+            return;
         }
 
-        // 創建新的球體標記選中的關節
-        Transform jointTransform = FindJointTransform(selectedJointName);
-        if (jointTransform != null && spherePrefab != null)
+        // 為每個選中的角色創建球體
+        foreach (string characterID in selectedCharacters)
         {
-            currentSphere = Instantiate(spherePrefab, jointTransform);
-            currentSphere.transform.localPosition = Vector3.zero;
-            currentSphere.transform.localScale = Vector3.one * JointScaleSize;
-            currentSphereRenderer = currentSphere.GetComponent<Renderer>();
-
-            // 如果球體沒有碰撞器，添加一個
-            if (currentSphere.GetComponent<Collider>() == null)
-            {
-                currentSphere.AddComponent<SphereCollider>();
-            }
-
-            // 確保球體是激活的
-            currentSphere.SetActive(true);
+            string skeletonName = "SkeletonCube_" + characterID;
+            CreateSphereForJoint(skeletonName, selectedJointName);
         }
 
         Debug.Log($"選擇了關節: {jointInfo.jointName}, 索引: {selectedJointIndex}");
+    }
+
+    // 為指定角色的關節創建球體
+    private void CreateSphereForJoint(string skeletonName, string jointName)
+    {
+        // 查找角色的骨架
+        GameObject skeletonObj = GameObject.Find(skeletonName);
+        if (skeletonObj == null)
+        {
+            Debug.LogWarning($"找不到骨架: {skeletonName}");
+            return;
+        }
+
+        // 查找關節
+        Transform jointTransform = skeletonObj.transform.Find(jointName);
+        if (jointTransform == null)
+        {
+            Debug.LogWarning($"在骨架 {skeletonName} 中找不到關節: {jointName}");
+            return;
+        }
+
+        // 創建球體
+        if (spherePrefab != null)
+        {
+            GameObject sphere = Instantiate(spherePrefab, jointTransform);
+            sphere.transform.localPosition = Vector3.zero;
+            sphere.transform.localScale = Vector3.one * JointScaleSize;
+            Renderer sphereRenderer = sphere.GetComponent<Renderer>();
+
+            // 如果球體沒有碰撞器，添加一個
+            if (sphere.GetComponent<Collider>() == null)
+            {
+                sphere.AddComponent<SphereCollider>();
+            }
+
+            // 確保球體是激活的
+            sphere.SetActive(true);
+
+            // 存儲球體引用
+            characterJointSpheres[skeletonName] = sphere;
+
+            // 如果是默認骨架，也保存到 currentSphere 以兼容現有代碼
+            if (skeletonName == "SkeletonCubeParent")
+            {
+                currentSphere = sphere;
+                currentSphereRenderer = sphereRenderer;
+            }
+
+            Debug.Log($"為骨架 {skeletonName} 的關節 {jointName} 創建了球體");
+        }
+    }
+
+    // 清除所有關節球體
+    private void ClearAllJointSpheres()
+    {
+        // 清除當前球體
+        if (currentSphere != null)
+        {
+            Destroy(currentSphere);
+            currentSphere = null;
+            currentSphereRenderer = null;
+        }
+
+        // 清除所有角色的球體
+        foreach (var sphere in characterJointSpheres.Values)
+        {
+            if (sphere != null)
+            {
+                Destroy(sphere);
+            }
+        }
+
+        characterJointSpheres.Clear();
     }
 
     private Transform FindJointTransform(string jointName)
@@ -933,7 +1021,26 @@ public class ManualBaseMotionEditor : MonoBehaviour
         // 更新 TempFramesData 中的關節位置
         dataManager.TempFramesData[dataManager.CurrentFrameIndex][selectedJointIndex] = newPosition;
 
-        // 更新顯示
+        // find HashSet of selected characters and update their positions
+        HashSet<string> selectedCharacters = characterSelectionManager.selectedIDs;
+        //todo
+        foreach (string characterID in selectedCharacters)
+        {
+            Transform characterSkeleton = GameObject.Find("SkeletonCube_" + characterID)?.transform;
+
+            if (characterSkeleton != null)
+            {
+                dataManager.CubeParent = characterSkeleton;
+                dataManager.UpdateCubeParentJointPositions(dataManager.CurrentFrameIndex);
+                Debug.Log($"已更新角色 {characterID} 的關節位置");
+            }
+            else
+            {
+                Debug.LogWarning($"找不到角色 {characterID} 的骨架");
+            }
+        }
+        // 最後，確保恢復默認骨架以便其他操作
+        dataManager.CubeParent = GameObject.Find("SkeletonCubeParent").transform;
         dataManager.UpdateCubeParentJointPositions(dataManager.CurrentFrameIndex);
     }
 
@@ -950,10 +1057,17 @@ public class ManualBaseMotionEditor : MonoBehaviour
             // 儲存控制器初始位置
             initialControllerPosition = activeControllerTransform.position;
 
-            // 改變球體顏色表示正在控制
-            if (currentSphereRenderer != null)
+            // 改變所有球體顏色表示正在控制
+            foreach (var sphere in characterJointSpheres.Values)
             {
-                currentSphereRenderer.material.color = Color.green; // 拖動時顏色
+                if (sphere != null)
+                {
+                    Renderer renderer = sphere.GetComponent<Renderer>();
+                    if (renderer != null)
+                    {
+                        renderer.material.color = Color.green; // 拖動時顏色
+                    }
+                }
             }
 
             Debug.Log($"開始控制關節: {selectedJointName}, 控制器初始位置: {initialControllerPosition}, 關節初始位置: {originalJointPosition}");
@@ -970,10 +1084,17 @@ public class ManualBaseMotionEditor : MonoBehaviour
         isControllingJoint = false;
         activeControllerTransform = null;
 
-        // 恢復球體顏色
-        if (currentSphereRenderer != null)
+        // 恢復所有球體顏色
+        foreach (var sphere in characterJointSpheres.Values)
         {
-            currentSphereRenderer.material.color = Color.white; // 恢復顏色
+            if (sphere != null)
+            {
+                Renderer renderer = sphere.GetComponent<Renderer>();
+                if (renderer != null)
+                {
+                    renderer.material.color = Color.white; // 恢復顏色
+                }
+            }
         }
 
         Debug.Log($"停止控制關節: {selectedJointName}");
@@ -1036,39 +1157,11 @@ public class ManualBaseMotionEditor : MonoBehaviour
 
     private void OnDestroy()
     {
-        if (dataManager != null)
-        {
-            dataManager.OnFrameChanged -= OnFrameChanged;
-            dataManager.OnDataLoaded -= OnDataLoaded;
-            dataManager.OnPlayStateChanged -= OnPlayStateChanged;
-        }
+        // ... 現有代碼 ...
 
-        if (doubleSlider != null)
-        {
-            doubleSlider.OnValueChanged.RemoveListener(OnSliderValueChanged);
-        }
-
-        if (timeSlider != null)
-        {
-            timeSlider.onValueChanged.RemoveListener(OnTimeSliderValueChanged);
-        }
-
-        // 清除關節按鈕的事件監聽器
-        foreach (var jointInfo in jointButtons)
-        {
-            if (jointInfo.button != null)
-            {
-                jointInfo.button.onClick.RemoveAllListeners();
-            }
-        }
-
-        // 銷毀球體
-        if (currentSphere != null)
-        {
-            Destroy(currentSphere);
-        }
+        // 清除所有球體
+        ClearAllJointSpheres();
 
         ClearMusicVisualization();
-
     }
 }

@@ -46,17 +46,65 @@ public class HttpService : MonoBehaviour
   }
 
   // 測試 API 連線
-  public void TestConnection(Action<bool, string> onComplete)
+  // public void TestConnection(Action<bool, string> onComplete)
+  // {
+  //   Get("/", (response) =>
+  //   {
+  //     Debug.Log($"API 連線測試成功: {response}");
+  //     onComplete?.Invoke(true, response);
+  //   }, (error) =>
+  //   {
+  //     Debug.LogError($"API 連線測試失敗: {error}");
+  //     onComplete?.Invoke(false, error);
+  //   });
+  // }
+
+  // Add this method to HttpService.cs
+  public void TestConnection()
   {
-    Get("/", (response) =>
+    StartCoroutine(TestConnectionCoroutine());
+  }
+
+  private IEnumerator TestConnectionCoroutine()
+  {
+    string testUrl = $"{baseUrl}/list_dances";
+    Debug.Log($"Testing connection to: {testUrl}");
+
+    UnityWebRequest request = UnityWebRequest.Get(testUrl);
+
+    // Add request headers for debugging
+    request.SetRequestHeader("User-Agent", "UnityWebRequest");
+
+    // Log before sending
+    Debug.Log($"Sending request to {testUrl}");
+
+    yield return request.SendWebRequest();
+
+    // Log detailed response information
+    Debug.Log($"Response received from {testUrl}");
+    Debug.Log($"Response Code: {request.responseCode}");
+    Debug.Log($"Error: {request.error}");
+    Debug.Log($"Result: {request.result}");
+
+    if (request.result == UnityWebRequest.Result.ConnectionError)
     {
-      Debug.Log($"API 連線測試成功: {response}");
-      onComplete?.Invoke(true, response);
-    }, (error) =>
+      Debug.LogError($"Connection error: {request.error}");
+    }
+    else if (request.result == UnityWebRequest.Result.ProtocolError)
     {
-      Debug.LogError($"API 連線測試失敗: {error}");
-      onComplete?.Invoke(false, error);
-    });
+      Debug.LogError($"HTTP error: {request.responseCode} - {request.error}");
+      Debug.LogError($"Response headers: {request.GetResponseHeaders()}");
+    }
+    else if (request.result == UnityWebRequest.Result.Success)
+    {
+      Debug.Log($"Connection successful! Response: {request.downloadHandler.text}");
+    }
+    else
+    {
+      Debug.LogError($"Unknown error: {request.error}");
+    }
+
+    request.Dispose();
   }
 
   // 發送動作生成請求
@@ -228,38 +276,6 @@ public class HttpService : MonoBehaviour
     string url = $"{baseUrl}/static/uploads/{danceId}/music_joints.csv";
     StartCoroutine(DownloadFile(url, danceId, "music_joints.csv", onComplete));
   }
-  // 獲取所有可用的舞蹈ID
-  public void ListDances(Action<List<string>> onSuccess, Action<string> onError = null)
-  {
-    Get("/list_dances", (response) =>
-    {
-      try
-      {
-        // 解析回應
-        DanceListResponse listResponse = JsonUtility.FromJson<DanceListResponse>(response);
-
-        if (listResponse.success)
-        {
-          Debug.Log($"成功獲取舞蹈列表，共有 {listResponse.dances.Count} 個舞蹈");
-          onSuccess?.Invoke(listResponse.dances);
-        }
-        else
-        {
-          Debug.LogError($"獲取舞蹈列表失敗: {listResponse.message}");
-          onError?.Invoke(listResponse.message);
-        }
-      }
-      catch (Exception ex)
-      {
-        Debug.LogError($"解析舞蹈列表回應失敗: {ex.Message}");
-        onError?.Invoke($"解析回應失敗: {ex.Message}");
-      }
-    }, (error) =>
-    {
-      Debug.LogError($"獲取舞蹈列表請求失敗: {error}");
-      onError?.Invoke(error);
-    });
-  }
 
   // 下載文件協程 (修改為支援固定檔名)
   private IEnumerator DownloadFile(string url, string danceId, string fileName, Action<bool> onComplete)
@@ -373,14 +389,5 @@ public class EditMotionResponse
   public bool success;
   public string message;
   public string id;
-  public string error_code;
-}
-
-[Serializable]
-public class DanceListResponse
-{
-  public bool success;
-  public string message;
-  public List<string> dances;
   public string error_code;
 }

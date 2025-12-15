@@ -10,7 +10,7 @@ public class DanceDataManager : MonoBehaviour
 {
   #region Public Properties
   // 從api獲得舞蹈資料夾清單
-  public string baseUrl = "http://miislab.pagekite.me"; //"http://140.118.162.43:8443"
+  public string baseUrl = "http://140.118.162.43:8443"; //"http://miislab.pagekite.me" "http://140.118.162.43:8443"
   public List<string> existingDanceIds = new List<string>();
   public List<List<Vector3>> FramesData { get; private set; } = new List<List<Vector3>>();
   public List<List<Vector3>> TempFramesData { get; private set; } = new List<List<Vector3>>();
@@ -80,7 +80,13 @@ public class DanceDataManager : MonoBehaviour
 
   public void Start()
   {
+    httpService = HttpService.Instance;
+    httpService.SetBaseUrl(baseUrl);
     checkList();
+  }
+  public void Update()
+  {
+    // Debug.Log("currentDanceId: " + CurrentDanceId);
   }
 
   // 手動調用以檢查資料夾列表
@@ -874,7 +880,252 @@ public class DanceDataManager : MonoBehaviour
       }
     }
   }
+  public bool ReplaceCSVFile(string danceId, string newCsvContent)
+  {
+    try
+    {
+      Debug.Log($"Attempting to replace CSV file for dance ID: {danceId}");
 
+      // Unload any existing resource to release file handles
+      TextAsset existingAsset = Resources.Load<TextAsset>($"{danceId}/{CSV_FILENAME.Split(".csv")[0]}");
+      if (existingAsset != null)
+      {
+        Resources.UnloadAsset(existingAsset);
+      }
+
+      // Path to the Resources folder
+      string resourcesPath = Application.dataPath + "/Resources";
+
+      // Path to the dance folder
+      string danceFolderPath = $"{resourcesPath}/{danceId}";
+
+      // Path to the CSV file
+      string csvFilePath = $"{danceFolderPath}/{CSV_FILENAME}";
+
+      Debug.Log($"CSV file path: {csvFilePath}");
+
+      // Create directories if they don't exist
+      if (!Directory.Exists(danceFolderPath))
+      {
+        Directory.CreateDirectory(danceFolderPath);
+      }
+
+      try
+      {
+        // Write content directly to the file
+        File.WriteAllText(csvFilePath, newCsvContent);
+        Debug.Log($"Successfully wrote CSV file for dance ID: {danceId}");
+      }
+      catch (IOException ex)
+      {
+        Debug.LogError($"Failed to write CSV file: {ex.Message}");
+
+        // Try to force close any open file handles
+        System.GC.Collect();
+        System.GC.WaitForPendingFinalizers();
+
+        // Try one more time with a short delay
+        System.Threading.Thread.Sleep(500);
+        File.WriteAllText(csvFilePath, newCsvContent);
+      }
+
+      // Refresh the asset database to see changes
+#if UNITY_EDITOR
+        UnityEditor.AssetDatabase.Refresh();
+#endif
+
+      // Give Unity a moment to recognize the file change
+      System.Threading.Thread.Sleep(200);
+
+      return true;
+    }
+    catch (System.Exception e)
+    {
+      Debug.LogError($"Error replacing CSV file: {e.Message}");
+      return false;
+    }
+  }
+
+  public void SaveCSVData()
+  {
+    try
+    {
+      // 創建一個字符串構建器來構建 CSV 內容
+      System.Text.StringBuilder csvBuilder = new System.Text.StringBuilder();
+
+      // 對於每一幀
+      for (int frameIndex = 0; frameIndex < TempFramesData.Count; frameIndex++)
+      {
+        List<Vector3> jointPositions = TempFramesData[frameIndex];
+
+        // 對於每一幀中的每個關節
+        for (int jointIndex = 0; jointIndex < jointPositions.Count; jointIndex++)
+        {
+          Vector3 position = jointPositions[jointIndex];
+
+          // 添加 x, y, z 值到 CSV 行
+          csvBuilder.Append(position.x.ToString("F6"));
+          csvBuilder.Append(",");
+          csvBuilder.Append(position.y.ToString("F6"));
+          csvBuilder.Append(",");
+          csvBuilder.Append(position.z.ToString("F6"));
+
+          // 如果不是最後一個關節，添加逗號分隔符
+          if (jointIndex < jointPositions.Count - 1)
+          {
+            csvBuilder.Append(",");
+          }
+        }
+
+        // 添加換行符（除非是最後一幀）
+        if (frameIndex < TempFramesData.Count - 1)
+        {
+          csvBuilder.AppendLine();
+        }
+      }
+
+      // 獲取 CSV 內容
+      string csvContent = csvBuilder.ToString();
+
+      // 使用 ReplaceCSVFile 方法保存
+      bool success = ReplaceCSVFile(CurrentDanceId, csvContent);
+
+      if (success)
+      {
+        Debug.Log($"成功保存 TempFramesData 到 CSV 文件: {CurrentDanceId}");
+
+        // 更新 FramesData 以匹配 TempFramesData
+        // FramesData = new List<List<Vector3>>(TempFramesData);
+      }
+      else
+      {
+        Debug.LogError($"保存 TempFramesData 到 CSV 文件失敗: {CurrentDanceId}");
+      }
+    }
+    catch (System.Exception e)
+    {
+      Debug.LogError($"保存 TempFramesData 時發生錯誤: {e.Message}");
+    }
+  }
+  public bool ReplaceCSVFileRange(string targetDanceId, string sourceDanceId, int startFrame, int endFrame)
+  {
+    try
+    {
+      Debug.Log($"嘗試替換 {targetDanceId} 的 CSV 文件中從 {startFrame} 到 {endFrame} 的範圍");
+
+      // 卸載現有資源以釋放文件句柄
+      TextAsset targetAsset = Resources.Load<TextAsset>($"{targetDanceId}/{CSV_FILENAME.Split(".csv")[0]}");
+      if (targetAsset != null)
+      {
+        Resources.UnloadAsset(targetAsset);
+      }
+
+      TextAsset sourceAsset = Resources.Load<TextAsset>($"{sourceDanceId}/{CSV_FILENAME.Split(".csv")[0]}");
+      if (sourceAsset == null)
+      {
+        Debug.LogError($"無法載入源 CSV 文件: {sourceDanceId}");
+        return false;
+      }
+
+      // 資源文件夾路徑
+      string resourcesPath = Application.dataPath + "/Resources";
+
+      // 目標舞蹈文件夾路徑
+      string targetFolderPath = $"{resourcesPath}/{targetDanceId}";
+      string targetFilePath = $"{targetFolderPath}/{CSV_FILENAME}";
+
+      // 源舞蹈文件夾路徑
+      string sourceFolderPath = $"{resourcesPath}/{sourceDanceId}";
+      string sourceFilePath = $"{sourceFolderPath}/{CSV_FILENAME}";
+
+      // 確保目錄存在
+      if (!Directory.Exists(targetFolderPath))
+      {
+        Directory.CreateDirectory(targetFolderPath);
+      }
+
+      // 讀取目標文件的所有行
+      string[] targetLines = File.Exists(targetFilePath)
+        ? File.ReadAllLines(targetFilePath)
+        : new string[0];
+
+      // 讀取源文件的所有行
+      string[] sourceLines = File.ReadAllLines(sourceFilePath);
+
+      // 驗證幀範圍
+      startFrame = Mathf.Clamp(startFrame, 0, targetLines.Length - 1);
+      endFrame = Mathf.Clamp(endFrame, startFrame, targetLines.Length - 1);
+
+      // 如果源文件的行數少於結束幀索引，則調整結束幀
+      if (sourceLines.Length <= endFrame)
+      {
+        Debug.LogWarning($"源文件行數 ({sourceLines.Length}) 少於結束幀 ({endFrame})，調整結束幀");
+        endFrame = sourceLines.Length - 1;
+      }
+
+      // 如果目標文件的行數少於結束幀索引，則擴展目標文件
+      if (targetLines.Length <= endFrame)
+      {
+        Debug.LogWarning($"目標文件行數 ({targetLines.Length}) 少於結束幀 ({endFrame})，擴展目標文件");
+        string[] newTargetLines = new string[endFrame + 1];
+        for (int i = 0; i < targetLines.Length; i++)
+        {
+          newTargetLines[i] = targetLines[i];
+        }
+
+        // 用空行填充擴展的部分
+        for (int i = targetLines.Length; i <= endFrame; i++)
+        {
+          newTargetLines[i] = sourceLines[i < sourceLines.Length ? i : sourceLines.Length - 1];
+        }
+
+        targetLines = newTargetLines;
+      }
+
+      // 只替換選定範圍內的行
+      for (int i = startFrame; i <= endFrame; i++)
+      {
+        if (i < sourceLines.Length)
+        {
+          targetLines[i] = sourceLines[i];
+        }
+      }
+
+      // 將修改後的內容寫入目標文件
+      try
+      {
+        File.WriteAllLines(targetFilePath, targetLines);
+        Debug.Log($"成功寫入 CSV 文件: {targetFilePath}");
+      }
+      catch (IOException ex)
+      {
+        Debug.LogError($"寫入 CSV 文件失敗: {ex.Message}");
+
+        // 嘗試強制關閉任何打開的文件句柄
+        System.GC.Collect();
+        System.GC.WaitForPendingFinalizers();
+
+        // 再嘗試一次，帶短暫延遲
+        System.Threading.Thread.Sleep(500);
+        File.WriteAllLines(targetFilePath, targetLines);
+      }
+
+      // 刷新資產數據庫以查看更改
+#if UNITY_EDITOR
+    UnityEditor.AssetDatabase.Refresh();
+#endif
+
+      // 給Unity一點時間來識別文件更改
+      System.Threading.Thread.Sleep(200);
+
+      return true;
+    }
+    catch (System.Exception e)
+    {
+      Debug.LogError($"替換 CSV 文件範圍時出錯: {e.Message}");
+      return false;
+    }
+  }
   public void SetPlayRange(int startFrame, int endFrame, bool useRange = true)
   {
     PlayRangeStart = Mathf.Clamp(startFrame, 0, TotalFrames - 1);
